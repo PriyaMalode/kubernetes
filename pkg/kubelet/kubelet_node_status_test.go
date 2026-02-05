@@ -205,7 +205,10 @@ func TestUpdateNewNodeStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
+			//ctx := context.Background()
+
 			ctx, cancel := context.WithCancel(context.Background())
+
 			// generate one more in inputImageList than we configure the Kubelet to report,
 			// or 5 images if unlimited
 			numTestImages := int(tc.nodeStatusMaxImages) + 1
@@ -215,14 +218,16 @@ func TestUpdateNewNodeStatus(t *testing.T) {
 			inputImageList, expectedImageList := generateTestingImageLists(numTestImages, int(tc.nodeStatusMaxImages))
 			testKubelet := newTestKubeletWithImageList(
 				t, inputImageList, false /* controllerAttachDetachEnabled */, true /*initFakeVolumePlugin*/, true /* localStorageCapacityIsolation */, false /*excludePodAdmitHandlers*/, false /*enableResizing*/)
+			//defer testKubelet.Cleanup()
 
 			t.Cleanup(func() {
-				// Cancel first so ctx-aware loops bail out.
+				// Cancel first so any loops watching ctx can exit.
 				cancel()
-				// Then run the kubelet test cleanup to stop managers.
+
+				// Then stop testKubelet components and wait for them to drain.
 				testKubelet.Cleanup()
-				// Temporary quiesce to avoid racing TempDir removal.
-				// Remove this once Cleanup() fully blocks on all goroutines.
+
+				// Small quiesce to avoid racing TempDir RemoveAll (diagnostic; see §3)
 				time.Sleep(50 * time.Millisecond)
 			})
 
