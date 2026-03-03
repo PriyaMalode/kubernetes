@@ -92,53 +92,45 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Race condition: claimWorker may run syncUnboundClaim before
-				// volumeWorker has processed volume5-2 into ctrl.volumes.store,
-				// so findBestMatchForClaim finds nothing and claim stays Pending.
-				//
-				// Strategy:
-				// 1. Wait until volume5-2 appears in ctrl.volumes.store AND
-				//    has been through syncVolume (Status.Phase is set by the
-				//    volume worker, not initializeCaches).
-				// 2. Re-enqueue the claim.
-				// 3. Keep polling until the claim is actually bound (ClaimRef set
-				//    in the reactor), so we don't return before binding completes.
-				volumeReady := false
-				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
-					func() (bool, error) {
-						// Phase 1: wait for volume to be processed by volumeWorker.
-						// initializeCaches populates ctrl.volumes.store directly but
-						// does NOT update Status.Phase — only syncVolume does that
-						// via updateVolumePhase. So Status.Phase != "" means the
-						// volume worker has actually run in this controller instance.
-						if !volumeReady {
-							obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
-							if err != nil || !found {
-								return false, err
-							}
-							pv, ok := obj.(*v1.PersistentVolume)
-							if !ok || pv.Status.Phase == "" {
-								return false, nil
-							}
-							// Volume worker has run. Re-enqueue the claim.
-							volumeReady = true
-							ctrl.claimQueue.Add("default/claim5-2")
-							return false, nil // keep polling for binding
-						}
-
-						// Phase 2: wait until binding is complete in ctrl.volumes.store.
-						obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
-						if err != nil || !found {
-							return false, err
-						}
-						pv, ok := obj.(*v1.PersistentVolume)
-						if !ok {
-							return false, nil
-						}
-						return pv.Spec.ClaimRef != nil, nil
-					})
-			},
-		},
+        // Race condition: claimWorker may have processed claim5-2 before
+        // volumeWorker put volume5-2 into ctrl.volumes.store, so
+        // findBestMatchForClaim found nothing and claim stayed Pending.
+        //
+        // However, binding may have already completed before test.test()
+        // is called (if the race didn't occur). We handle both cases:
+        //
+        // Case A: binding already done — volume has ClaimRef set,
+        //         just return nil immediately.
+        // Case B: binding not done yet — wait for volume to be in store
+        //         with ClaimRef == nil, re-enqueue the claim once, then
+        //         wait until ClaimRef is set (binding complete).
+        claimRequeued := false
+        return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
+            func() (bool, error) {
+                obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
+                if err != nil || !found {
+                    return false, err
+                }
+                pv, ok := obj.(*v1.PersistentVolume)
+                if !ok {
+                    return false, nil
+                }
+                // Case A / end of Case B: binding is complete.
+                if pv.Spec.ClaimRef != nil {
+                    return true, nil
+                }
+                // Volume is in store but not yet bound.
+                // Re-enqueue the claim exactly once so syncUnboundClaim
+                // runs again now that the volume is in ctrl.volumes.store.
+                if !claimRequeued {
+                    claimRequeued = true
+                    ctrl.claimQueue.Add("default/claim5-2")
+                }
+                // Keep polling until ClaimRef is set (binding complete).
+                return false, nil
+            })
+		}
+    },
 		{
 			// deleteClaim with a bound claim makes bound volume released.
 			name:            "5-3 - delete claim",
