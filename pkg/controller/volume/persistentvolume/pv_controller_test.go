@@ -93,38 +93,49 @@ func TestControllerSync(t *testing.T) {
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
 				// Race condition: claimWorker may run syncUnboundClaim before
-				// volumeWorker processes volume5-2 into ctrl.volumes.store, so
-				// findBestMatchForClaim finds nothing and claim stays Pending.
+				// volumeWorker has run syncVolume. Even though initializeCaches
+				// populates ctrl.volumes.store before workers start, syncClaim
+				// calls updateClaimMigrationAnnotationsAndFinalizers which saves
+				// the claim to the reactor with a new ResourceVersion. The next
+				// syncClaim then sees a stale ctrl.claims cache entry (old RV)
+				// and storeObjectUpdate drops it, leaving binding incomplete.
 				//
-				// Fix: wait until the volume exists in the reactor with ClaimRef
-				// set (binding complete), OR if still unbound, re-enqueue the
-				// claim once and then wait for reactor to confirm binding.
+				// Fix: wait for the volume worker to run syncVolume (detected by
+				// the reactor recording 2 volume updates for migration annotations),
+				// then re-enqueue both volume and claim so both workers run fresh
+				// with up-to-date caches and can complete binding.
 				//
-				// We use reactor.GetVolume (authoritative API server state) rather
-				// than ctrl.volumes.store, because the store may lag behind or
-				// never reflect binding if the volume worker hasn't run yet.
-				claimRequeued := false
+				// We detect "volume worker has run" by checking that reactor's
+				// volume5-2 has been updated at least once beyond its initial
+				// state from AddVolume (ResourceVersion "1").
+				initialRV := ""
+				if pv, err := reactor.GetVolume("volume5-2"); err == nil {
+					initialRV = pv.ResourceVersion
+				}
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
 						pv, err := reactor.GetVolume("volume5-2")
 						if err != nil {
-							// Volume not in reactor yet, keep waiting.
 							return false, nil
 						}
-						// Binding complete — reactor reflects bound state.
+						// Case A: binding already complete (happy path or
+						// volume worker ran before claim worker).
 						if pv.Spec.ClaimRef != nil {
 							return true, nil
 						}
-						// Volume exists but is not yet bound.
-						// Re-enqueue the claim exactly once so syncUnboundClaim
-						// runs again. By the time we reach here, ctrl.volumes.store
-						// is populated (initializeCaches runs before workers start),
-						// so findBestMatchForClaim will find volume5-2.
-						if !claimRequeued {
-							claimRequeued = true
-							ctrl.claimQueue.Add("default/claim5-2")
+						// Case B: volume worker hasn't run yet (ResourceVersion
+						// unchanged). Keep waiting — don't re-enqueue yet because
+						// ctrl.volumes.store may not reflect migration annotation
+						// updates needed for findBestMatchForClaim to succeed.
+						if pv.ResourceVersion == initialRV {
+							return false, nil
 						}
-						// Keep polling until reactor confirms ClaimRef is set.
+						// Case C: volume worker has run (RV changed) but binding
+						// hasn't happened. Re-enqueue both so syncVolume and
+						// syncUnboundClaim both run with fresh state.
+						ctrl.volumeQueue.Add("volume5-2")
+						ctrl.claimQueue.Add("default/claim5-2")
+						// Keep polling until reactor confirms binding is complete.
 						return false, nil
 					})
 			},
