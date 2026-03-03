@@ -92,27 +92,50 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// In the race condition, claimWorker runs syncUnboundClaim before
+				// Race condition: claimWorker may run syncUnboundClaim before
 				// volumeWorker has processed volume5-2 into ctrl.volumes.store,
 				// so findBestMatchForClaim finds nothing and claim stays Pending.
 				//
-				// Wait until volume5-2 is in ctrl.volumes.store (meaning volumeWorker
-				// has run in this controller instance), then re-enqueue the claim
-				// so syncUnboundClaim runs again and can find the volume.
+				// Strategy:
+				// 1. Wait until volume5-2 appears in ctrl.volumes.store AND
+				//    has been through syncVolume (Status.Phase is set by the
+				//    volume worker, not initializeCaches).
+				// 2. Re-enqueue the claim.
+				// 3. Keep polling until the claim is actually bound (ClaimRef set
+				//    in the reactor), so we don't return before binding completes.
+				volumeReady := false
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
+						// Phase 1: wait for volume to be processed by volumeWorker.
+						// initializeCaches populates ctrl.volumes.store directly but
+						// does NOT update Status.Phase — only syncVolume does that
+						// via updateVolumePhase. So Status.Phase != "" means the
+						// volume worker has actually run in this controller instance.
+						if !volumeReady {
+							obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
+							if err != nil || !found {
+								return false, err
+							}
+							pv, ok := obj.(*v1.PersistentVolume)
+							if !ok || pv.Status.Phase == "" {
+								return false, nil
+							}
+							// Volume worker has run. Re-enqueue the claim.
+							volumeReady = true
+							ctrl.claimQueue.Add("default/claim5-2")
+							return false, nil // keep polling for binding
+						}
+
+						// Phase 2: wait until binding is complete in ctrl.volumes.store.
 						obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
 						if err != nil || !found {
 							return false, err
 						}
 						pv, ok := obj.(*v1.PersistentVolume)
-						if !ok || pv.Spec.ClaimRef != nil {
-							// Already bound, no need to re-enqueue
-							return true, nil
+						if !ok {
+							return false, nil
 						}
-						// Volume is in store and unbound. Re-enqueue claim.
-						ctrl.claimQueue.Add("default/claim5-2")
-						return true, nil
+						return pv.Spec.ClaimRef != nil, nil
 					})
 			},
 		},
