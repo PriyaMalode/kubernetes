@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -93,22 +92,25 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Wait until syncVolume has processed volume5-2 by checking that
-				// its ResourceVersion has been incremented in the reactor (meaning
-				// updateVolumeMigrationAnnotationsAndFinalizers has run and the
-				// volume is now fully in ctrl.volumes.store). Then re-enqueue
-				// claim5-2 so findBestMatchForClaim can find it.
+				// In the race condition, claimWorker runs syncUnboundClaim before
+				// volumeWorker has processed volume5-2 into ctrl.volumes.store,
+				// so findBestMatchForClaim finds nothing and claim stays Pending.
+				//
+				// Wait until volume5-2 is in ctrl.volumes.store (meaning volumeWorker
+				// has run in this controller instance), then re-enqueue the claim
+				// so syncUnboundClaim runs again and can find the volume.
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
-						volume, err := reactor.GetVolume("volume5-2")
-						if err != nil {
-							return false, nil
+						obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
+						if err != nil || !found {
+							return false, err
 						}
-						rv, _ := strconv.Atoi(volume.ResourceVersion)
-						if rv < 2 {
-							// syncVolume hasn't updated the volume yet
-							return false, nil
+						pv, ok := obj.(*v1.PersistentVolume)
+						if !ok || pv.Spec.ClaimRef != nil {
+							// Already bound, no need to re-enqueue
+							return true, nil
 						}
+						// Volume is in store and unbound. Re-enqueue claim.
 						ctrl.claimQueue.Add("default/claim5-2")
 						return true, nil
 					})
