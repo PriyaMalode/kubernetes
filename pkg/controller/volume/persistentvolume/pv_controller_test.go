@@ -92,41 +92,39 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Race condition: claimWorker may have processed claim5-2 before
-				// volumeWorker put volume5-2 into ctrl.volumes.store, so
-				// findBestMatchForClaim found nothing and claim stayed Pending.
+				// Race condition: claimWorker may run syncUnboundClaim before
+				// volumeWorker processes volume5-2 into ctrl.volumes.store, so
+				// findBestMatchForClaim finds nothing and claim stays Pending.
 				//
-				// However, binding may have already completed before test.test()
-				// is called (if the race didn't occur). We handle both cases:
+				// Fix: wait until the volume exists in the reactor with ClaimRef
+				// set (binding complete), OR if still unbound, re-enqueue the
+				// claim once and then wait for reactor to confirm binding.
 				//
-				// Case A: binding already done — volume has ClaimRef set,
-				//         just return nil immediately.
-				// Case B: binding not done yet — wait for volume to be in store
-				//         with ClaimRef == nil, re-enqueue the claim once, then
-				//         wait until ClaimRef is set (binding complete).
+				// We use reactor.GetVolume (authoritative API server state) rather
+				// than ctrl.volumes.store, because the store may lag behind or
+				// never reflect binding if the volume worker hasn't run yet.
 				claimRequeued := false
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
-						obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
-						if err != nil || !found {
-							return false, err
-						}
-						pv, ok := obj.(*v1.PersistentVolume)
-						if !ok {
+						pv, err := reactor.GetVolume("volume5-2")
+						if err != nil {
+							// Volume not in reactor yet, keep waiting.
 							return false, nil
 						}
-						// Case A / end of Case B: binding is complete.
+						// Binding complete — reactor reflects bound state.
 						if pv.Spec.ClaimRef != nil {
 							return true, nil
 						}
-						// Volume is in store but not yet bound.
+						// Volume exists but is not yet bound.
 						// Re-enqueue the claim exactly once so syncUnboundClaim
-						// runs again now that the volume is in ctrl.volumes.store.
+						// runs again. By the time we reach here, ctrl.volumes.store
+						// is populated (initializeCaches runs before workers start),
+						// so findBestMatchForClaim will find volume5-2.
 						if !claimRequeued {
 							claimRequeued = true
 							ctrl.claimQueue.Add("default/claim5-2")
 						}
-						// Keep polling until ClaimRef is set (binding complete).
+						// Keep polling until reactor confirms ClaimRef is set.
 						return false, nil
 					})
 			},
