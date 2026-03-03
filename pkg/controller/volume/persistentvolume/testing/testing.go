@@ -580,3 +580,14 @@ func NewVolumeReactor(ctx context.Context, client *fake.Clientset, fakeVolumeWat
 	})
 	return reactor
 }
+
+// GetVolume returns a PV by name from the reactor's store.
+func (r *VolumeReactor) GetVolume(name string) (*v1.PersistentVolume, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	volume, found := r.volumes[name]
+	if !found {
+		return nil, fmt.Errorf("volume %s not found", name)
+	}
+	return volume.DeepCopy(), nil
+}

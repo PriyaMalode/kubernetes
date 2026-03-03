@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -92,22 +93,25 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Wait until volume5-2 is in ctrl.volumes.store AND has been
-				// processed by syncVolume (i.e. it has a ClaimRef=nil but
-				// Status.Phase is set to Available by syncVolume).
-				// Then force the claim to re-sync so findBestMatchForClaim
-				// can find the volume.
-				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
-					_, found, err := ctrl.volumes.store.GetByKey("volume5-2")
-					if err != nil {
-						return false, err
-					}
-					if !found {
-						return false, nil
-					}
-					ctrl.claimQueue.Add("default/claim5-2")
-					return true, nil
-				})
+				// Wait until syncVolume has processed volume5-2 by checking that
+				// its ResourceVersion has been incremented in the reactor (meaning
+				// updateVolumeMigrationAnnotationsAndFinalizers has run and the
+				// volume is now fully in ctrl.volumes.store). Then re-enqueue
+				// claim5-2 so findBestMatchForClaim can find it.
+				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
+					func() (bool, error) {
+						volume, err := reactor.GetVolume("volume5-2")
+						if err != nil {
+							return false, nil
+						}
+						rv, _ := strconv.Atoi(volume.ResourceVersion)
+						if rv < 2 {
+							// syncVolume hasn't updated the volume yet
+							return false, nil
+						}
+						ctrl.claimQueue.Add("default/claim5-2")
+						return true, nil
+					})
 			},
 		},
 		{
