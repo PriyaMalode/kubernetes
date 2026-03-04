@@ -593,12 +593,12 @@ func (r *VolumeReactor) GetVolume(name string) (*v1.PersistentVolume, error) {
 }
 
 // GetClaim returns a PVC by namespace/name from the reactor's store.
-func (r *VolumeReactor) GetClaim(namespace, name string) (*v1.PersistentVolumeClaim, error) {
+func (r *VolumeReactor) GetClaim(name string) (*v1.PersistentVolumeClaim, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 	claim, found := r.claims[name]
 	if !found {
-		return nil, fmt.Errorf("claim %s/%s not found", namespace, name)
+		return nil, fmt.Errorf("claim %s not found", name)
 	}
 	return claim.DeepCopy(), nil
 }
