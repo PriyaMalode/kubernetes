@@ -92,32 +92,45 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Race condition: claimWorker may run syncUnboundClaim before
-				// volumeWorker runs syncVolume. Even though initializeCaches
-				// populates ctrl.volumes.store before workers start, if the
-				// claim worker processes claim5-2 first, findBestMatchForClaim
-				// may succeed but the subsequent bindVolumeToClaim call reads
-				// the claim back from the reactor — and if the claim's
-				// ResourceVersion in the reactor is newer than what the claim
-				// worker's cache has (due to migration annotation updates),
-				// the bind update conflicts and binding fails.
+				// Race condition: claimWorker may run syncClaim before volumeWorker
+				// runs syncVolume. When this happens, syncUnboundClaim calls
+				// findBestMatchForClaim which succeeds (volume is in
+				// ctrl.volumes.store via initializeCaches), but then
+				// bindVolumeToClaim fetches the claim from the reactor and finds
+				// a ResourceVersion mismatch (migration annotation update already
+				// incremented it), so the bind update is rejected and the claim
+				// stays Pending.
 				//
-				// Fix: wait until both queues are empty (all initial items have
-				// been dequeued and processed by their respective workers), then
-				// check if binding already completed. If not, re-enqueue the
-				// claim so syncUnboundClaim runs again with fully consistent
-				// state. Poll until reactor confirms binding is done.
+				// Detection: syncClaim always calls
+				// updateClaimMigrationAnnotationsAndFinalizers first, which
+				// saves the claim to the reactor (incrementing its RV) even if
+				// no migration annotations are needed. We record the initial RV
+				// and wait until the reactor's claim RV has changed — meaning
+				// syncClaim has run at least once.
+				//
+				// Then: if binding already completed, return nil. Otherwise
+				// syncVolume hasn't run yet or lost the race; wait for
+				// volumeWorker to complete (volume RV changes in reactor or
+				// volume phase is set in store), then re-enqueue the claim.
+				initialClaimRV := ""
+				if c, err := reactor.GetClaim("default", "claim5-2"); err == nil {
+					initialClaimRV = c.ResourceVersion
+				}
+
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
-						// Wait for both workers to finish processing all
-						// currently queued items. Len() == 0 on both queues
-						// means the volume worker has completed syncVolume and
-						// the claim worker has completed its initial syncClaim.
-						if ctrl.volumeQueue.Len() > 0 || ctrl.claimQueue.Len() > 0 {
+						// Step 1: wait for syncClaim to have run at least once
+						// (claim RV advanced in reactor).
+						claim, err := reactor.GetClaim("default", "claim5-2")
+						if err != nil {
+							return false, nil
+						}
+						if claim.ResourceVersion == initialClaimRV {
+							// syncClaim hasn't run yet.
 							return false, nil
 						}
 
-						// Check if binding already completed (happy path).
+						// Step 2: check if binding already completed.
 						pv, err := reactor.GetVolume("volume5-2")
 						if err != nil {
 							return false, nil
@@ -126,11 +139,30 @@ func TestControllerSync(t *testing.T) {
 							return true, nil
 						}
 
-						// Queues are drained but binding didn't happen —
-						// claim was processed before volume was ready.
-						// Re-enqueue the claim so it runs again now that
-						// syncVolume has completed and ctrl.volumes.store
-						// is fully up to date.
+						// Step 3: binding not done. Check if syncVolume has run
+						// by seeing if the volume in ctrl.volumes.store has been
+						// updated (its RV is higher than what initializeCaches
+						// stored, meaning updateVolumePhase wrote back to store).
+						// If not, keep waiting for the volume worker to finish.
+						obj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
+						if err != nil || !found {
+							return false, err
+						}
+						storePV, ok := obj.(*v1.PersistentVolume)
+						if !ok {
+							return false, nil
+						}
+						// Compare store RV against reactor RV. After syncVolume
+						// calls updateVolumePhase → storeVolumeUpdate, the store
+						// RV matches the reactor RV. If they differ, the volume
+						// worker hasn't written back to the store yet.
+						if storePV.ResourceVersion != pv.ResourceVersion {
+							return false, nil
+						}
+
+						// Step 4: volume worker has completed syncVolume and
+						// store is up to date. Re-enqueue the claim so
+						// syncUnboundClaim runs again with consistent state.
 						ctrl.claimQueue.Add("default/claim5-2")
 						return false, nil
 					})
