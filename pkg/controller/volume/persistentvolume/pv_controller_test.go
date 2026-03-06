@@ -19,6 +19,7 @@ package persistentvolume
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -92,28 +93,33 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-    return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
-        func() (bool, error) {
-            // Debug: print index state every poll
-            keys := ctrl.volumes.store.ListKeys()
-            modes := ctrl.volumes.allPossibleMatchingAccessModes(
-                []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce, v1.ReadOnlyMany})
-            fmt.Printf("DEBUG: store keys=%v, allPossibleModes=%v\n", keys, modes)
-            
-            claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
-            if err != nil { return false, err }
-            if found {
-                claim := claimObj.(*v1.PersistentVolumeClaim)
-                if claim.Spec.VolumeName == "volume5-2" {
-                    return true, nil
-                }
-            }
-            _, volFound, err := ctrl.volumes.store.GetByKey("volume5-2")
-            if err != nil || !volFound { return false, err }
-            ctrl.claimQueue.Add("default/claim5-2")
-            return false, nil
-        })
-},
+				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
+					func() (bool, error) {
+						// Debug: print index state every poll
+						keys := ctrl.volumes.store.ListKeys()
+						modes := ctrl.volumes.allPossibleMatchingAccessModes(
+							[]v1.PersistentVolumeAccessMode{v1.ReadWriteOnce, v1.ReadOnlyMany})
+						fmt.Printf("DEBUG: store keys=%v, allPossibleModes=%v\n", keys, modes)
+
+						claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
+						if err != nil {
+							return false, err
+						}
+						if found {
+							claim := claimObj.(*v1.PersistentVolumeClaim)
+							if claim.Spec.VolumeName == "volume5-2" {
+								return true, nil
+							}
+						}
+						_, volFound, err := ctrl.volumes.store.GetByKey("volume5-2")
+						if err != nil || !volFound {
+							return false, err
+						}
+						ctrl.claimQueue.Add("default/claim5-2")
+						return false, nil
+					})
+			},
+		},
 		{
 			// deleteClaim with a bound claim makes bound volume released.
 			name:            "5-3 - delete claim",
