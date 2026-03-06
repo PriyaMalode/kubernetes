@@ -101,17 +101,12 @@ func TestControllerSync(t *testing.T) {
 						}
 						if found {
 							claim := claimObj.(*v1.PersistentVolumeClaim)
+							fmt.Printf("DEBUG claim: VolumeName=%q Phase=%q RV=%s\n",
+								claim.Spec.VolumeName, claim.Status.Phase, claim.ResourceVersion)
 							if claim.Spec.VolumeName == "volume5-2" {
 								return true, nil
 							}
 						}
-						volObj, volFound, err := ctrl.volumes.store.GetByKey("volume5-2")
-						if err != nil || !volFound {
-							return false, err
-						}
-						pv := volObj.(*v1.PersistentVolume)
-						fmt.Printf("DEBUG: pv.Phase=%q pv.ClaimRef=%v pv.RV=%s pv.Annotations=%v\n",
-							pv.Status.Phase, pv.Spec.ClaimRef, pv.ResourceVersion, pv.Annotations)
 						ctrl.claimQueue.Add("default/claim5-2")
 						return false, nil
 					})
