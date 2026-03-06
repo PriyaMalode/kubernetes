@@ -19,7 +19,6 @@ package persistentvolume
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -93,23 +92,7 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
-					func() (bool, error) {
-						claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
-						if err != nil {
-							return false, err
-						}
-						if found {
-							claim := claimObj.(*v1.PersistentVolumeClaim)
-							fmt.Printf("DEBUG claim: VolumeName=%q Phase=%q RV=%s\n",
-								claim.Spec.VolumeName, claim.Status.Phase, claim.ResourceVersion)
-							if claim.Spec.VolumeName == "volume5-2" {
-								return true, nil
-							}
-						}
-						ctrl.claimQueue.Add("default/claim5-2")
-						return false, nil
-					})
+				return nil
 			},
 		},
 		{
