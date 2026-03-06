@@ -95,12 +95,6 @@ func TestControllerSync(t *testing.T) {
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
-						// Debug: print index state every poll
-						keys := ctrl.volumes.store.ListKeys()
-						modes := ctrl.volumes.allPossibleMatchingAccessModes(
-							[]v1.PersistentVolumeAccessMode{v1.ReadWriteOnce, v1.ReadOnlyMany})
-						fmt.Printf("DEBUG: store keys=%v, allPossibleModes=%v\n", keys, modes)
-
 						claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
 						if err != nil {
 							return false, err
@@ -111,10 +105,13 @@ func TestControllerSync(t *testing.T) {
 								return true, nil
 							}
 						}
-						_, volFound, err := ctrl.volumes.store.GetByKey("volume5-2")
+						volObj, volFound, err := ctrl.volumes.store.GetByKey("volume5-2")
 						if err != nil || !volFound {
 							return false, err
 						}
+						pv := volObj.(*v1.PersistentVolume)
+						fmt.Printf("DEBUG: pv.Phase=%q pv.ClaimRef=%v pv.RV=%s pv.Annotations=%v\n",
+							pv.Status.Phase, pv.Spec.ClaimRef, pv.ResourceVersion, pv.Annotations)
 						ctrl.claimQueue.Add("default/claim5-2")
 						return false, nil
 					})
