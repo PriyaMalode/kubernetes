@@ -92,7 +92,37 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				return nil
+				// Under race conditions, claimWorker may run syncUnboundClaim before
+				// volumeWorker puts volume5-2 into ctrl.volumes.store. When this
+				// happens findBestMatchForClaim returns nil and the claim stays Pending.
+				// ctrl.resync() (called after test.test returns) will re-enqueue the
+				// claim, but we cannot rely on it completing within waitTest's 5s timeout
+				// under stress. Instead we wait here until volume5-2 is in the store,
+				// then explicitly re-enqueue the claim and wait for binding to complete
+				// before returning - guaranteeing waitTest sees the final state immediately.
+				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
+					func() (bool, error) {
+						// Check if binding already completed (happy path - no race)
+						claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
+						if err != nil {
+							return false, err
+						}
+						if found {
+							claim, ok := claimObj.(*v1.PersistentVolumeClaim)
+							if ok && claim.Spec.VolumeName == "volume5-2" {
+								return true, nil
+							}
+						}
+						// Binding not done yet. Ensure volume is in store before
+						// re-enqueuing, otherwise findBestMatchForClaim will miss it again.
+						_, volFound, err := ctrl.volumes.store.GetByKey("volume5-2")
+						if err != nil || !volFound {
+							return false, err
+						}
+						// Volume is in store - re-enqueue claim to trigger binding
+						ctrl.claimQueue.Add("default/claim5-2")
+						return false, nil
+					})
 			},
 		},
 		{
