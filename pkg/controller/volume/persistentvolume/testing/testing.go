@@ -508,37 +508,6 @@ func (r *VolumeReactor) AddClaim(claim *v1.PersistentVolumeClaim) {
 	r.claims[claim.Name] = claim
 }
 
-// GetClaim returns a PVC from VolumeReactor by name.
-func (r *VolumeReactor) GetClaim(name string) (*v1.PersistentVolumeClaim, bool) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-	claim, ok := r.claims[name]
-	return claim, ok
-}
-
-// SetClaimResourceVersion sets the ResourceVersion of a claim in the reactor
-// to the given value. Used in tests to fix up version conflicts.
-func (r *VolumeReactor) SetClaimResourceVersion(name, rv string) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	if claim, ok := r.claims[name]; ok {
-		claim = claim.DeepCopy()
-		claim.ResourceVersion = rv
-		r.claims[name] = claim
-	}
-}
-
-// SetVolumeResourceVersion sets the ResourceVersion of a volume in the reactor.
-func (r *VolumeReactor) SetVolumeResourceVersion(name, rv string) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	if volume, ok := r.volumes[name]; ok {
-		volume = volume.DeepCopy()
-		volume.ResourceVersion = rv
-		r.volumes[name] = volume
-	}
-}
-
 // AddVolume adds a PV into VolumeReactor.
 func (r *VolumeReactor) AddVolume(volume *v1.PersistentVolume) {
 	r.lock.Lock()
