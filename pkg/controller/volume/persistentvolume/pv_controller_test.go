@@ -359,7 +359,7 @@ func TestControllerSync(t *testing.T) {
 			reactor.AddVolume(volume)
 			// go func(volume *v1.PersistentVolume) {
 			fakeVolumeWatch.Add(volume)
-			// }(volume)
+			// }(volume
 		}
 
 		wg.Go(func() {
