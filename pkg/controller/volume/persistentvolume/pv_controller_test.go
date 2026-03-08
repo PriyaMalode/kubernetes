@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -93,29 +92,14 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Wait until ctrl.claims has the latest RV (post-updateClaimStatus),
-				// so that when resync re-enqueues and bind() runs, it won't get
-				// ErrVersionConflict from using a stale RV.
+				// Under race conditions, claimWorker may run syncUnboundClaim before
+				// volumeWorker puts volume5-2 into ctrl.volumes.store. When this happens,
+				// findBestMatchForClaim returns nil and the claim stays Pending.
+				// Poll the reactor directly (ground truth) until binding is reflected there,
+				// avoiding any dependency on watch propagation or ctrl.claims staleness.
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
-						obj, found, err := ctrl.claims.GetByKey("default/claim5-2")
-						if err != nil || !found {
-							return false, err
-						}
-						claim := obj.(*v1.PersistentVolumeClaim)
-						// If already bound, we're done
-						if claim.Spec.VolumeName == "volume5-2" {
-							return true, nil
-						}
-						// Wait until RV >= 2, meaning updateClaimStatus(Pending) has
-						// propagated through the watch event into ctrl.claims.
-						// At that point resync() will re-enqueue with the fresh object
-						// and bind() won't hit ErrVersionConflict.
-						rv, err := strconv.ParseInt(claim.ResourceVersion, 10, 64)
-						if err != nil {
-							return false, err
-						}
-						return rv >= 2, nil
+						return reactor.CheckClaims(test.expectedClaims) == nil, nil
 					})
 			},
 		},
