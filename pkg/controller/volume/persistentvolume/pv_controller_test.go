@@ -342,26 +342,25 @@ func TestControllerSync(t *testing.T) {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
 			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
-			go func(claim *v1.PersistentVolumeClaim) {
-				fakeClaimWatch.Add(claim)
-			}(claim)
 		}
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
 			informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume)
-			go func(volume *v1.PersistentVolume) {
-				fakeVolumeWatch.Add(volume)
-			}(volume)
 		}
+
+		// Start the controller
+		informers.Start(ctx.Done())
+		informers.WaitForCacheSync(ctx.Done())
+
 		// Start the controller
 		var wg sync.WaitGroup
 		defer wg.Wait()
 		ctx, cancel := context.WithCancel(context.TODO())
 		defer cancel()
 
-		informers.Start(ctx.Done())
-		informers.WaitForCacheSync(ctx.Done())
+		// informers.Start(ctx.Done())
+		// informers.WaitForCacheSync(ctx.Done())
 
 		wg.Go(func() {
 			ctrl.Run(ctx)
