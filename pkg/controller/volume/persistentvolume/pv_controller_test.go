@@ -347,13 +347,6 @@ func TestControllerSync(t *testing.T) {
 		informers.Start(ctx.Done())
 		informers.WaitForCacheSync(ctx.Done())
 
-		for _, claim := range test.initialClaims {
-			claim = claim.DeepCopy()
-			reactor.AddClaim(claim)
-			// go func(claim *v1.PersistentVolumeClaim) {
-			fakeClaimWatch.Add(claim)
-			// }(claim)
-		}
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
@@ -362,9 +355,13 @@ func TestControllerSync(t *testing.T) {
 			// }(volume
 		}
 
-		wg.Go(func() {
-			ctrl.Run(ctx)
-		})
+		for _, claim := range test.initialClaims {
+			claim = claim.DeepCopy()
+			reactor.AddClaim(claim)
+			// go func(claim *v1.PersistentVolumeClaim) {
+			fakeClaimWatch.Add(claim)
+			// }(claim)
+		}
 
 		// Wait for the controller to pass initial sync and fill its caches.
 		err = wait.Poll(10*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
