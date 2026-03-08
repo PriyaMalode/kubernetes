@@ -97,15 +97,16 @@ func TestControllerSync(t *testing.T) {
 						if reactor.CheckClaims(test.expectedClaims) == nil {
 							return true, nil
 						}
-						// The fake watcher was stopped before the RV update from
-						// updateClaimStatus(Pending) propagated to ctrl.claims.
-						// ctrl.claims still has RV=1 while the reactor has RV=2+,
-						// causing bind() to hit ErrVersionConflict every attempt.
-						// Fix: directly refresh ctrl.claims from reactor ground truth,
-						// then reset the rate limiter and re-enqueue.
-						if fresh, ok := reactor.GetClaim("claim5-2"); ok {
-							ctrl.claims.Update(fresh)
+						// Race: claimWorker ran before volumeWorker, called
+						// updateClaimStatus(Pending) bumping reactor RV to 2+,
+						// while ctrl.claims still has RV=1. Reset reactor's claim
+						// RV to match ctrl.claims so the next bind() attempt succeeds.
+						obj, found, err := ctrl.claims.GetByKey("default/claim5-2")
+						if err != nil || !found {
+							return false, err
 						}
+						claimInCache := obj.(*v1.PersistentVolumeClaim)
+						reactor.SetClaimResourceVersion("claim5-2", claimInCache.ResourceVersion)
 						ctrl.claimQueue.Forget("default/claim5-2")
 						ctrl.claimQueue.Add("default/claim5-2")
 						return false, nil
