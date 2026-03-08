@@ -97,9 +97,15 @@ func TestControllerSync(t *testing.T) {
 						if reactor.CheckClaims(test.expectedClaims) == nil {
 							return true, nil
 						}
-						// Race occurred: claimWorker hit ErrVersionConflict and is
-						// rate-limited via AddRateLimited. Forget() resets the rate
-						// limiter so the next Add() is processed immediately.
+						// The fake watcher was stopped before the RV update from
+						// updateClaimStatus(Pending) propagated to ctrl.claims.
+						// ctrl.claims still has RV=1 while the reactor has RV=2+,
+						// causing bind() to hit ErrVersionConflict every attempt.
+						// Fix: directly refresh ctrl.claims from reactor ground truth,
+						// then reset the rate limiter and re-enqueue.
+						if fresh, ok := reactor.GetClaim("claim5-2"); ok {
+							ctrl.claims.Update(fresh)
+						}
 						ctrl.claimQueue.Forget("default/claim5-2")
 						ctrl.claimQueue.Add("default/claim5-2")
 						return false, nil

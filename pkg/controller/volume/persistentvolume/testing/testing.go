@@ -508,6 +508,14 @@ func (r *VolumeReactor) AddClaim(claim *v1.PersistentVolumeClaim) {
 	r.claims[claim.Name] = claim
 }
 
+// GetClaim returns a PVC from VolumeReactor by name.
+func (r *VolumeReactor) GetClaim(name string) (*v1.PersistentVolumeClaim, bool) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	claim, ok := r.claims[name]
+	return claim, ok
+}
+
 // AddVolume adds a PV into VolumeReactor.
 func (r *VolumeReactor) AddVolume(volume *v1.PersistentVolume) {
 	r.lock.Lock()
