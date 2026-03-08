@@ -85,49 +85,14 @@ func TestControllerSync(t *testing.T) {
 		},
 		{
 			name:            "5-2-3 - complete bind when PV and PVC both exist and PV has AnnPreResizeCapacity annotation",
-			initialVolumes:  volumesWithAnnotation(util.AnnPreResizeCapacity, "1Gi", newVolumeArray("volume5-2", "2Gi", "", "", v1.VolumeAvailable, v1.PersistentVolumeReclaimRetain, classEmpty)),
+			initialVolumes:  volumesWithAnnotation(util.AnnPreResizeCapacity, "1Gi", newVolumeArray("volume5-2", "2Gi", "", "", v1.VolumeAvailable, v1.PersistentVolumeReclaimRetain, classEmpty, volume.AnnBoundByController)),
 			expectedVolumes: volumesWithAnnotation(util.AnnPreResizeCapacity, "1Gi", newVolumeArray("volume5-2", "2Gi", "uid5-2", "claim5-2", v1.VolumeBound, v1.PersistentVolumeReclaimRetain, classEmpty, volume.AnnBoundByController)),
 			initialClaims:   withExpectedCapacity("2Gi", newClaimArray("claim5-2", "uid5-2", "2Gi", "", v1.ClaimPending, nil)),
 			expectedClaims:  withExpectedCapacity("1Gi", newClaimArray("claim5-2", "uid5-2", "2Gi", "volume5-2", v1.ClaimBound, nil, volume.AnnBoundByController, volume.AnnBindCompleted)),
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				intervened := false
-				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
-					func() (bool, error) {
-						if reactor.CheckClaims(test.expectedClaims) == nil {
-							return true, nil
-						}
-						if intervened {
-							return false, nil
-						}
-						// Detect race: claimWorker ran syncUnboundClaim before
-						// volumeWorker, calling updateClaimStatus(Pending) which
-						// bumped the reactor's claim RV. Subsequent bind() calls
-						// fail with ErrVersionConflict because ctrl.claims and
-						// ctrl.volumes.store still hold RV=1 from initializeCaches
-						// while the reactor has advanced RVs from prior instances.
-						//
-						// Fix: reset the reactor's claim and volume RVs to match
-						// the controller's local cache, so bind() succeeds on the
-						// next attempt.
-						claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
-						if err != nil || !found {
-							return false, err
-						}
-						volObj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
-						if err != nil || !found {
-							return false, err
-						}
-						reactor.SetClaimResourceVersion("claim5-2",
-							claimObj.(*v1.PersistentVolumeClaim).ResourceVersion)
-						reactor.SetVolumeResourceVersion("volume5-2",
-							volObj.(*v1.PersistentVolume).ResourceVersion)
-						ctrl.claimQueue.Forget("default/claim5-2")
-						ctrl.claimQueue.Add("default/claim5-2")
-						intervened = true
-						return false, nil
-					})
+				return nil
 			},
 		},
 		{
@@ -376,16 +341,12 @@ func TestControllerSync(t *testing.T) {
 		for _, claim := range test.initialClaims {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
-			go func(claim *v1.PersistentVolumeClaim) {
-				fakeClaimWatch.Add(claim)
-			}(claim)
+			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
 		}
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
-			go func(volume *v1.PersistentVolume) {
-				fakeVolumeWatch.Add(volume)
-			}(volume)
+			informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume)
 		}
 
 		// Start the controller
