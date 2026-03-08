@@ -92,15 +92,15 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
+				intervened := false
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
 						if reactor.CheckClaims(test.expectedClaims) == nil {
 							return true, nil
 						}
-						// Race: claimWorker ran before volumeWorker, called
-						// updateClaimStatus(Pending) bumping reactor RV to 2+,
-						// while ctrl.claims still has RV=1. Reset reactor's claim
-						// RV to match ctrl.claims so the next bind() attempt succeeds.
+						if intervened {
+							return false, nil
+						}
 						obj, found, err := ctrl.claims.GetByKey("default/claim5-2")
 						if err != nil || !found {
 							return false, err
@@ -109,6 +109,7 @@ func TestControllerSync(t *testing.T) {
 						reactor.SetClaimResourceVersion("claim5-2", claimInCache.ResourceVersion)
 						ctrl.claimQueue.Forget("default/claim5-2")
 						ctrl.claimQueue.Add("default/claim5-2")
+						intervened = true
 						return false, nil
 					})
 			},
