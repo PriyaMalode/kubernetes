@@ -338,19 +338,21 @@ func TestControllerSync(t *testing.T) {
 		ctrl.classLister = storagelisters.NewStorageClassLister(indexer)
 
 		reactor := newVolumeReactor(ctx, client, ctrl, fakeVolumeWatch, fakeClaimWatch, test.errors)
-		for _, volume := range test.initialVolumes {
-			volume = volume.DeepCopy()
-			reactor.AddVolume(volume)
-			//go func(volume *v1.PersistentVolume) {
-			fakeVolumeWatch.Add(volume)
-			//}(volume)
-		}
 		for _, claim := range test.initialClaims {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
-			//go func(claim *v1.PersistentVolumeClaim) {
-			fakeClaimWatch.Add(claim)
-			//}(claim)
+			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
+			go func(claim *v1.PersistentVolumeClaim) {
+				fakeClaimWatch.Add(claim)
+			}(claim)
+		}
+		for _, volume := range test.initialVolumes {
+			volume = volume.DeepCopy()
+			reactor.AddVolume(volume)
+			informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume)
+			go func(volume *v1.PersistentVolume) {
+				fakeVolumeWatch.Add(volume)
+			}(volume)
 		}
 		// Start the controller
 		var wg sync.WaitGroup
