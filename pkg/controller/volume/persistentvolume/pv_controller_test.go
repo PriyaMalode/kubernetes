@@ -101,12 +101,28 @@ func TestControllerSync(t *testing.T) {
 						if intervened {
 							return false, nil
 						}
-						obj, found, err := ctrl.claims.GetByKey("default/claim5-2")
+						// Detect race: claimWorker ran syncUnboundClaim before
+						// volumeWorker, calling updateClaimStatus(Pending) which
+						// bumped the reactor's claim RV. Subsequent bind() calls
+						// fail with ErrVersionConflict because ctrl.claims and
+						// ctrl.volumes.store still hold RV=1 from initializeCaches
+						// while the reactor has advanced RVs from prior instances.
+						//
+						// Fix: reset the reactor's claim and volume RVs to match
+						// the controller's local cache, so bind() succeeds on the
+						// next attempt.
+						claimObj, found, err := ctrl.claims.GetByKey("default/claim5-2")
 						if err != nil || !found {
 							return false, err
 						}
-						claimInCache := obj.(*v1.PersistentVolumeClaim)
-						reactor.SetClaimResourceVersion("claim5-2", claimInCache.ResourceVersion)
+						volObj, found, err := ctrl.volumes.store.GetByKey("volume5-2")
+						if err != nil || !found {
+							return false, err
+						}
+						reactor.SetClaimResourceVersion("claim5-2",
+							claimObj.(*v1.PersistentVolumeClaim).ResourceVersion)
+						reactor.SetVolumeResourceVersion("volume5-2",
+							volObj.(*v1.PersistentVolume).ResourceVersion)
 						ctrl.claimQueue.Forget("default/claim5-2")
 						ctrl.claimQueue.Add("default/claim5-2")
 						intervened = true

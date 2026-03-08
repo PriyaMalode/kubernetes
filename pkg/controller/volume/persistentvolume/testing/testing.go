@@ -528,6 +528,17 @@ func (r *VolumeReactor) SetClaimResourceVersion(name, rv string) {
 	}
 }
 
+// SetVolumeResourceVersion sets the ResourceVersion of a volume in the reactor.
+func (r *VolumeReactor) SetVolumeResourceVersion(name, rv string) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	if volume, ok := r.volumes[name]; ok {
+		volume = volume.DeepCopy()
+		volume.ResourceVersion = rv
+		r.volumes[name] = volume
+	}
+}
+
 // AddVolume adds a PV into VolumeReactor.
 func (r *VolumeReactor) AddVolume(volume *v1.PersistentVolume) {
 	r.lock.Lock()
