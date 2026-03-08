@@ -341,18 +341,16 @@ func TestControllerSync(t *testing.T) {
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
-			go func(volume *v1.PersistentVolume) {
-				fakeVolumeWatch.Add(volume)
-			}(volume)
+			//go func(volume *v1.PersistentVolume) {
+			fakeVolumeWatch.Add(volume)
+			//}(volume)
 		}
-		//small delay to allow volume workers to process before claim workers
-		time.Sleep(50 * time.Millisecond)
 		for _, claim := range test.initialClaims {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
-			go func(claim *v1.PersistentVolumeClaim) {
-				fakeClaimWatch.Add(claim)
-			}(claim)
+			//go func(claim *v1.PersistentVolumeClaim) {
+			fakeClaimWatch.Add(claim)
+			//}(claim)
 		}
 		// Start the controller
 		var wg sync.WaitGroup
