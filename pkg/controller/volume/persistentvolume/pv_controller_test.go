@@ -345,7 +345,8 @@ func TestControllerSync(t *testing.T) {
 				fakeVolumeWatch.Add(volume)
 			}(volume)
 		}
-
+		//small delay to allow volume workers to process before claim workers
+		time.Sleep(50 * time.Millisecond)
 		for _, claim := range test.initialClaims {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
