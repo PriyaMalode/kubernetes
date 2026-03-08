@@ -27,6 +27,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/informers"
@@ -319,6 +320,21 @@ func TestControllerSync(t *testing.T) {
 		client.PrependWatchReactor("nodes", core.DefaultWatchReactor(watch.NewFakeWithOptions(watch.FakeOptions{Logger: &logger}), nil))
 		client.PrependWatchReactor("pods", core.DefaultWatchReactor(watch.NewFakeWithOptions(watch.FakeOptions{Logger: &logger}), nil))
 
+		client.AddReactor("list", "persistentvolumes", func(action core.Action) (bool, runtime.Object, error) {
+			pvList := &v1.PersistentVolumeList{}
+			for _, v := range test.initialVolumes {
+				pvList.Items = append(pvList.Items, *v.DeepCopy())
+			}
+			return true, pvList, nil
+		})
+		client.AddReactor("list", "persistentvolumeclaims", func(action core.Action) (bool, runtime.Object, error) {
+			pvcList := &v1.PersistentVolumeClaimList{}
+			for _, c := range test.initialClaims {
+				pvcList.Items = append(pvcList.Items, *c.DeepCopy())
+			}
+			return true, pvcList, nil
+		})
+
 		informers := informers.NewSharedInformerFactory(client, controller.NoResyncPeriodFunc())
 		ctrl, err := newTestController(ctx, client, informers, true)
 		if err != nil {
@@ -338,15 +354,15 @@ func TestControllerSync(t *testing.T) {
 		ctrl.classLister = storagelisters.NewStorageClassLister(indexer)
 
 		reactor := newVolumeReactor(ctx, client, ctrl, fakeVolumeWatch, fakeClaimWatch, test.errors)
-		for _, claim := range test.initialClaims {
-			claim = claim.DeepCopy()
-			reactor.AddClaim(claim)
-			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
-		}
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
 			informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume)
+		}
+		for _, claim := range test.initialClaims {
+			claim = claim.DeepCopy()
+			reactor.AddClaim(claim)
+			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
 		}
 
 		// Start the controller
