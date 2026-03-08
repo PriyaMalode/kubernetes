@@ -341,12 +341,16 @@ func TestControllerSync(t *testing.T) {
 		for _, claim := range test.initialClaims {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
-			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
+			// go func(claim *v1.PersistentVolumeClaim) {
+			fakeClaimWatch.Add(claim)
+			// }(claim)
 		}
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
-			informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume)
+			// go func(volume *v1.PersistentVolume) {
+			fakeVolumeWatch.Add(volume)
+			// }(volume)
 		}
 
 		// Start the controller
@@ -367,7 +371,6 @@ func TestControllerSync(t *testing.T) {
 			return len(ctrl.claims.ListKeys()) >= len(test.initialClaims) &&
 				len(ctrl.volumes.store.ListKeys()) >= len(test.initialVolumes), nil
 		})
-
 		if err != nil {
 			t.Errorf("Test %q controller sync failed: %v", test.name, err)
 		}
@@ -391,7 +394,6 @@ func TestControllerSync(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			doit(test)
 		})
