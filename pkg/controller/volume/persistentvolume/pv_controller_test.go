@@ -92,14 +92,17 @@ func TestControllerSync(t *testing.T) {
 			expectedEvents:  noevents,
 			errors:          noerrors,
 			test: func(ctrl *PersistentVolumeController, reactor *pvtesting.VolumeReactor, test controllerTest) error {
-				// Under race conditions, claimWorker may run syncUnboundClaim before
-				// volumeWorker puts volume5-2 into ctrl.volumes.store. When this happens,
-				// findBestMatchForClaim returns nil and the claim stays Pending.
-				// Poll the reactor directly (ground truth) until binding is reflected there,
-				// avoiding any dependency on watch propagation or ctrl.claims staleness.
 				return wait.PollImmediate(10*time.Millisecond, wait.ForeverTestTimeout,
 					func() (bool, error) {
-						return reactor.CheckClaims(test.expectedClaims) == nil, nil
+						if reactor.CheckClaims(test.expectedClaims) == nil {
+							return true, nil
+						}
+						// Race occurred: claimWorker hit ErrVersionConflict and is
+						// rate-limited via AddRateLimited. Forget() resets the rate
+						// limiter so the next Add() is processed immediately.
+						ctrl.claimQueue.Forget("default/claim5-2")
+						ctrl.claimQueue.Add("default/claim5-2")
+						return false, nil
 					})
 			},
 		},
