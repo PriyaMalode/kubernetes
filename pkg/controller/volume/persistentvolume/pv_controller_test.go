@@ -357,12 +357,16 @@ func TestControllerSync(t *testing.T) {
 		for _, volume := range test.initialVolumes {
 			volume = volume.DeepCopy()
 			reactor.AddVolume(volume)
-			informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume)
+			if err := informers.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(volume); err != nil {
+				t.Fatalf("Test %q failed to add volume to informer: %v", test.name, err)
+			}
 		}
 		for _, claim := range test.initialClaims {
 			claim = claim.DeepCopy()
 			reactor.AddClaim(claim)
-			informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim)
+			if err := informers.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(claim); err != nil {
+				t.Fatalf("Test %q failed to add claim to informer: %v", test.name, err)
+			}
 		}
 
 		// Start the controller
